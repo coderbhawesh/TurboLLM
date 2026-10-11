@@ -180,6 +180,28 @@ export function isFlat(groups: ModelGroup[]): boolean {
   return groups.length === 1
 }
 
+/** Narrow the picker's groups to the choices a search query matches (issue #270).
+ *
+ *  Every whitespace-separated word must appear, case-insensitively, in the model's name,
+ *  its quant or its machine — so "qwen q4" and "workstation" both find what the user
+ *  means. Never the id: a local key carries the file size, so a digit would match rows
+ *  the user cannot see a reason for.
+ *
+ *  A group left with no matches is dropped, including an offline machine's note — while
+ *  searching, the user is looking for a model, and a list of everything that did NOT match
+ *  is noise. An empty query returns the groups untouched. */
+export function filterModelGroups(groups: ModelGroup[], query: string): ModelGroup[] {
+  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return groups
+  const matches = (c: ModelChoice) => {
+    const haystack = [c.name, c.quant ?? '', c.machine ?? ''].join(' ').toLowerCase()
+    return words.every((w) => haystack.includes(w))
+  }
+  return groups
+    .map((g) => ({ ...g, choices: g.choices.filter(matches) }))
+    .filter((g) => g.choices.length > 0)
+}
+
 /** The remote model a qualified id names, or undefined for a local id.
  *
  *  This is the PEER-SIDE half of `ModelRouter.resolveRemoteTarget` (final-review C-1): the

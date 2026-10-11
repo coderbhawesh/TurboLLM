@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { describeRemoteHost, findRemoteChoice, groupModelChoices, selectModel, type RemoteModelRow } from './remote-models'
+import { describeRemoteHost, filterModelGroups, findRemoteChoice, groupModelChoices, selectModel, type RemoteModelRow } from './remote-models'
 import { statusNote } from './fleet'
 import type { LinkRecord } from './link-api'
 import type { ModelEntry } from './types'
@@ -221,6 +221,47 @@ describe('groupModelChoices', () => {
 // direction is a shipped bug: a false negative sends a qualified id to the LOCAL engine
 // loader (which aborts in-flight generations and loads a different model), and a false
 // positive stops an ordinary local model with a slash in its key from ever loading.
+
+describe('filterModelGroups: the picker search (#270)', () => {
+  const groups = () => groupModelChoices({
+    local: [
+      local({ key: 'gemma-27b|Q4_K_M|16000000000', name: 'Gemma 27B', quant: 'Q4_K_M' }),
+      local({ key: 'qwen3-8b|Q8_0|8000000000', name: 'Qwen3 8B', quant: 'Q8_0' }),
+    ],
+    links: [link({ id: 'l1', name: 'workstation' }), link({ id: 'l2', name: 'kaggle', status: 'unreachable' })],
+    remote: [row('l1', 'workstation', { key: 'qwen3-35b', name: 'Qwen3 35B', loaded: true })],
+  })
+  const names = (gs: ReturnType<typeof groups>) => gs.flatMap((g) => g.choices.map((c) => c.name))
+
+  it('returns the groups untouched for an empty or blank query', () => {
+    const gs = groups()
+    expect(filterModelGroups(gs, '')).toBe(gs)
+    expect(filterModelGroups(gs, '   ')).toBe(gs)
+  })
+
+  it('matches the model name case-insensitively, across local and remote', () => {
+    expect(names(filterModelGroups(groups(), 'QWEN'))).toEqual(['Qwen3 8B', 'Qwen3 35B'])
+  })
+
+  it('matches the quant and the machine name too', () => {
+    expect(names(filterModelGroups(groups(), 'q8'))).toEqual(['Qwen3 8B'])
+    expect(names(filterModelGroups(groups(), 'workstation'))).toEqual(['Qwen3 35B'])
+  })
+
+  it('requires EVERY word to match, in any order', () => {
+    expect(names(filterModelGroups(groups(), 'q4 gemma'))).toEqual(['Gemma 27B'])
+    expect(names(filterModelGroups(groups(), 'gemma q8'))).toEqual([])
+  })
+
+  it('never matches on the id — a local key carries the file size', () => {
+    expect(names(filterModelGroups(groups(), '16000000000'))).toEqual([])
+  })
+
+  it('drops groups with no matches, offline machines included', () => {
+    const filtered = filterModelGroups(groups(), 'gemma')
+    expect(filtered.map((g) => g.label)).toEqual(['This machine'])
+  })
+})
 
 describe('findRemoteChoice', () => {
   const onlineLink = { id: 'l1', name: 'workstation', status: 'online', grantedCapabilities: ['models:use'] } as unknown as LinkRecord
